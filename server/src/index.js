@@ -5,7 +5,7 @@ import bcrypt from 'bcryptjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { initDb, query, nextCaseNo } from './db.js';
+import { initDb, pool, query, nextCaseNo } from './db.js';
 import { validateSchema } from './formSchema.js';
 import { signToken, requireAuth, requireAdmin } from './auth.js';
 import { calcProgress, sanitizeData, missingRequired } from './progress.js';
@@ -15,14 +15,28 @@ app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
 const wrap = (fn) => (req, res, next) => fn(req, res, next).catch(next);
-const dateOrNull = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : null);
+// 'YYYY-MM-DD' ที่เป็นวันที่มีอยู่จริงเท่านั้น (2026-02-30 → null)
+const dateOrNull = (v) => {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+  const d = new Date(`${v}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v ? v : null;
+};
+const badReceiveDate = (h) => h.receiveDate && !dateOrNull(h.receiveDate);
+
+// :id ต้องเป็นจำนวนเต็มบวกในช่วง integer ของ Postgres ไม่งั้นถือว่าไม่พบ (กัน error 500 จากฐานข้อมูล)
+app.param('id', (req, res, next, id) => {
+  if (/^\d{1,10}$/.test(id) && Number(id) <= 2147483647) return next();
+  res.status(404).json({ error: 'ไม่พบข้อมูล' });
+});
 
 // ---------- Auth ----------
 app.post('/api/auth/login', wrap(async (req, res) => {
   const { username, password } = req.body || {};
+  const fail = () => res.status(401).json({ error: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' });
+  if (typeof username !== 'string' || typeof password !== 'string') return fail();
   const { rows } = await query('SELECT * FROM users WHERE username=$1 AND active', [username]);
   const u = rows[0];
-  if (!u || !(await bcrypt.compare(password || '', u.password_hash))) {
+  if (!u || !(await bcrypt.compare(password, u.password_hash))) {
     return res.status(401).json({ error: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' });
   }
   res.json({ token: signToken(u), user: publicUser(u) });
@@ -38,9 +52,9 @@ app.get('/api/auth/me', requireAuth, wrap(async (req, res) => {
 
 app.post('/api/auth/password', requireAuth, wrap(async (req, res) => {
   const { current, next } = req.body || {};
-  if (!next || next.length < 8) return res.status(400).json({ error: 'รหัสผ่านใหม่ต้องยาวอย่างน้อย 8 ตัวอักษร' });
+  if (typeof next !== 'string' || next.length < 8) return res.status(400).json({ error: 'รหัสผ่านใหม่ต้องยาวอย่างน้อย 8 ตัวอักษร' });
   const { rows } = await query('SELECT * FROM users WHERE id=$1', [req.user.id]);
-  if (!(await bcrypt.compare(current || '', rows[0].password_hash))) {
+  if (typeof current !== 'string' || !(await bcrypt.compare(current, rows[0].password_hash))) {
     return res.status(400).json({ error: 'รหัสผ่านปัจจุบันไม่ถูกต้อง' });
   }
   await query('UPDATE users SET password_hash=$1 WHERE id=$2', [await bcrypt.hash(next, 10), req.user.id]);
@@ -58,7 +72,7 @@ app.get('/api/users', requireAuth, requireAdmin, wrap(async (_req, res) => {
 
 app.post('/api/users', requireAuth, requireAdmin, wrap(async (req, res) => {
   const { username, password, displayName, role = 'staff', orgId = null } = req.body || {};
-  if (!username || !password || password.length < 8 || !displayName) {
+  if (typeof username !== 'string' || !username || typeof password !== 'string' || password.length < 8 || typeof displayName !== 'string' || !displayName) {
     return res.status(400).json({ error: 'กรอก username, ชื่อ และรหัสผ่านอย่างน้อย 8 ตัวอักษร' });
   }
   if (!['admin', 'staff'].includes(role)) return res.status(400).json({ error: 'role ไม่ถูกต้อง' });
@@ -90,7 +104,7 @@ app.put('/api/users/:id', requireAuth, requireAdmin, wrap(async (req, res) => {
     return res.status(400).json({ error: 'ไม่สามารถปิดการใช้งานหรือลดสิทธิ์บัญชีของตนเองได้' });
   }
   if (role === 'staff' && !orgId) return res.status(400).json({ error: 'เจ้าหน้าที่ต้องระบุหน่วยงาน' });
-  if (b.password && b.password.length < 8) return res.status(400).json({ error: 'รหัสผ่านต้องยาวอย่างน้อย 8 ตัวอักษร' });
+  if (b.password && (typeof b.password !== 'string' || b.password.length < 8)) return res.status(400).json({ error: 'รหัสผ่านต้องยาวอย่างน้อย 8 ตัวอักษร' });
   const hash = b.password ? await bcrypt.hash(b.password, 10) : cur.password_hash;
   const { rows } = await query(
     `UPDATE users SET display_name=$1, role=$2, org_id=$3, active=$4, password_hash=$5 WHERE id=$6
@@ -143,8 +157,10 @@ const CASE_SELECT = `
 
 app.get('/api/cases', requireAuth, wrap(async (req, res) => {
   const { org, template, status, q, from, to } = req.query;
-  const page = Math.max(1, Number(req.query.page) || 1);
-  const size = Math.min(100, Number(req.query.size) || 20);
+  // จำกัดเป็นจำนวนเต็มในช่วงที่ปลอดภัย (ค่าติดลบ / 1e20 / Infinity ไม่ทำให้ SQL พัง)
+  const intIn = (v, min, max, def) => Math.min(max, Math.max(min, Math.floor(Number(v)) || def));
+  const page = intIn(req.query.page, 1, 100000, 1);
+  const size = intIn(req.query.size, 1, 100, 20);
   const where = ['true'];
   const p = [];
   const add = (sql, v) => { p.push(v); where.push(sql.replace('?', `$${p.length}`)); };
@@ -228,14 +244,27 @@ app.post('/api/cases', requireAuth, wrap(async (req, res) => {
   const miss = missingRequired(t.schema, clean);
   if (miss.length) return res.status(400).json({ error: `กรุณากรอก ${miss.join(', ')}` });
   const h = clean.header;
-  const caseNo = await nextCaseNo(t.oid, t.doc_prefix || 'CL');
-  const { rows } = await query(
-    `INSERT INTO cases (case_no, template_id, template_version, receive_date, doc_no, requester, data, progress, created_by, updated_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9) RETURNING id`,
-    [caseNo, t.id, t.version, dateOrNull(h.receiveDate), h.docNo, h.requesterOrg || h.memberNo, clean, calcProgress(t.schema, clean), req.user.id]
-  );
-  await query(`INSERT INTO case_logs (case_id, user_id, action) VALUES ($1,$2,'สร้างเอกสาร')`, [rows[0].id, req.user.id]);
-  res.status(201).json(await fullCase(rows[0].id));
+  if (badReceiveDate(h)) return res.status(400).json({ error: 'วันที่รับเรื่องไม่ถูกต้อง' });
+  // ออกเลขที่เอกสารกับบันทึกเคสใน transaction เดียว บันทึกไม่สำเร็จเลขจะไม่ถูกใช้ไป
+  const db = await pool.connect();
+  let id;
+  try {
+    await db.query('BEGIN');
+    const caseNo = await nextCaseNo(t.oid, t.doc_prefix || 'CL', undefined, db);
+    id = (await db.query(
+      `INSERT INTO cases (case_no, template_id, template_version, receive_date, doc_no, requester, data, progress, created_by, updated_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9) RETURNING id`,
+      [caseNo, t.id, t.version, dateOrNull(h.receiveDate), h.docNo, h.requesterOrg || h.memberNo, clean, calcProgress(t.schema, clean), req.user.id]
+    )).rows[0].id;
+    await db.query(`INSERT INTO case_logs (case_id, user_id, action) VALUES ($1,$2,'สร้างเอกสาร')`, [id, req.user.id]);
+    await db.query('COMMIT');
+  } catch (e) {
+    await db.query('ROLLBACK');
+    throw e;
+  } finally {
+    db.release();
+  }
+  res.status(201).json(await fullCase(id));
 }));
 
 app.get('/api/cases/:id', requireAuth, wrap(async (req, res) => {
@@ -252,6 +281,7 @@ app.put('/api/cases/:id', requireAuth, wrap(async (req, res) => {
   const miss = missingRequired(t.schema, clean);
   if (miss.length) return res.status(400).json({ error: `กรุณากรอก ${miss.join(', ')}` });
   const h = clean.header;
+  if (badReceiveDate(h)) return res.status(400).json({ error: 'วันที่รับเรื่องไม่ถูกต้อง' });
   await query(
     `UPDATE cases SET receive_date=$1, doc_no=$2, requester=$3, data=$4, progress=$5, updated_by=$6, updated_at=now() WHERE id=$7`,
     [dateOrNull(h.receiveDate), h.docNo, h.requesterOrg || h.memberNo, clean, calcProgress(t.schema, clean), req.user.id, c.id]
@@ -266,8 +296,11 @@ app.post('/api/cases/:id/:action(close|reopen|cancel)', requireAuth, wrap(async 
   if (!c) return;
   const { action } = req.params;
   if (action === 'reopen' && req.user.role !== 'admin') return res.status(403).json({ error: 'เฉพาะผู้ดูแลระบบที่เปิดงานใหม่ได้' });
+  // close / cancel ได้เฉพาะเอกสารที่เปิดอยู่, reopen ได้เฉพาะเอกสารที่ปิดหรือยกเลิกแล้ว
+  if (action === 'reopen' ? c.status === 'open' : c.status !== 'open') {
+    return res.status(409).json({ error: action === 'reopen' ? 'เอกสารนี้เปิดอยู่แล้ว' : 'เอกสารนี้ไม่ได้อยู่ระหว่างดำเนินการ' });
+  }
   if (action === 'close') {
-    if (c.status !== 'open') return res.status(409).json({ error: 'เอกสารนี้ไม่ได้อยู่ระหว่างดำเนินการ' });
     const t = { schema: await schemaOf(c.template_id, c.template_version) };
     const missing = [];
     if (t.schema.footer?.closedBy && !c.data.closedBy?.trim()) missing.push('ผู้ปิดงาน');
@@ -287,7 +320,8 @@ app.post('/api/cases/:id/:action(close|reopen|cancel)', requireAuth, wrap(async 
 }));
 
 app.delete('/api/cases/:id', requireAuth, requireAdmin, wrap(async (req, res) => {
-  await query('DELETE FROM cases WHERE id=$1', [req.params.id]);
+  const { rowCount } = await query('DELETE FROM cases WHERE id=$1', [req.params.id]);
+  if (!rowCount) return res.status(404).json({ error: 'ไม่พบเอกสาร' });
   res.json({ ok: true });
 }));
 

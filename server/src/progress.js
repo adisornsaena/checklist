@@ -22,7 +22,8 @@ export function calcProgress(schema, data = {}) {
 // ตัดข้อมูลให้เหลือเฉพาะ key ที่มีใน schema (กันข้อมูลแปลกปลอม) และจำกัดความยาวข้อความ
 const str = (v, max = 2000) => (typeof v === 'string' ? v.slice(0, max) : v == null ? '' : String(v).slice(0, max));
 
-export function sanitizeData(schema, input = {}) {
+export function sanitizeData(schema, input) {
+  if (!input || typeof input !== 'object') input = {};
   const out = { header: {}, checks: {}, steps: {}, fields: {} };
   for (const f of schema.header) out.header[f.key] = str(input.header?.[f.key], 300);
 
@@ -59,8 +60,9 @@ export function sanitizeData(schema, input = {}) {
 export function missingRequired(schema, data = {}) {
   const empty = (v) => !String(v ?? '').trim();
   const head = (schema.header || []).filter((f) => f.required && empty(data.header?.[f.key]));
+  // ช่องใน section ชนิด fields และช่องวันที่ (dateField) ของ section ชนิด checks ต่างเก็บไว้ใน data.fields
   const body = (schema.sections || [])
-    .filter((s) => s.type === 'fields')
-    .flatMap((s) => s.fields.filter((f) => f.required && empty(data.fields?.[f.key])));
+    .flatMap((s) => (s.type === 'fields' ? s.fields : s.type === 'checks' && s.dateField ? [s.dateField] : []))
+    .filter((f) => f.required && empty(data.fields?.[f.key]));
   return [...head, ...body].map((f) => f.label);
 }

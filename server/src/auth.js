@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import { query } from './db.js';
 
 const SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
 
@@ -11,15 +12,25 @@ if (process.env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || process
 export const signToken = (user) =>
   jwt.sign({ id: user.id, role: user.role, orgId: user.org_id }, SECRET, { expiresIn: '12h' });
 
-export function requireAuth(req, res, next) {
+// สิทธิ์ (role / หน่วยงาน / active) อ่านจากฐานข้อมูลทุกคำขอ ไม่เชื่อค่าใน token
+// ปิดใช้งาน ย้ายหน่วยงาน หรือลดสิทธิ์แล้วจึงมีผลทันทีโดยไม่ต้องรอ token หมดอายุ
+export async function requireAuth(req, res, next) {
   const h = req.headers.authorization || '';
   const token = h.startsWith('Bearer ') ? h.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'กรุณาเข้าสู่ระบบ' });
+  let payload;
   try {
-    req.user = jwt.verify(token, SECRET);
-    next();
+    payload = jwt.verify(token, SECRET);
   } catch {
-    res.status(401).json({ error: 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่' });
+    return res.status(401).json({ error: 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่' });
+  }
+  try {
+    const u = (await query('SELECT id, role, org_id FROM users WHERE id=$1 AND active', [payload.id])).rows[0];
+    if (!u) return res.status(401).json({ error: 'บัญชีนี้ถูกปิดใช้งาน กรุณาติดต่อผู้ดูแลระบบ' });
+    req.user = { id: u.id, role: u.role, orgId: u.org_id };
+    next();
+  } catch (e) {
+    next(e);
   }
 }
 
