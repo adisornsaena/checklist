@@ -70,7 +70,7 @@ test('key แปลกปลอมถูกตัดทิ้งทุกระ�
   assert.equal(r.body.status, 'open');
 });
 
-test('ข้อความยาวเกินถูกตัดตามขนาด (header 300 / fields 500 / remark 500 / note 5000 / closedBy 200)', async () => {
+test('ข้อความยาวเกินถูกตัดตามขนาด (header 300 / fields 500 / remark 500 / note 5000 / closedBy 200) และวันที่ผิดรูปแบบเป็น ""', async () => {
   const L = (n) => 'ก'.repeat(n);
   const r = await create(minimalData({
     header: { requesterOrg: L(1000) },
@@ -86,10 +86,10 @@ test('ข้อความยาวเกินถูกตัดตามข�
   assert.equal(d.checks.c1.remark.length, 500);
   assert.equal(d.steps.s1.operator.length, 200);
   assert.equal(d.steps.s1.amount.length, 30);
-  assert.equal(d.steps.s1.date.length, 20);
+  assert.equal(d.steps.s1.date, '');
   assert.equal(d.note.length, 5000);
   assert.equal(d.closedBy.length, 200);
-  assert.equal(d.completedDate.length, 20);
+  assert.equal(d.completedDate, '');
 });
 
 test('ค่า step ที่ไม่อยู่ใน options → "" / ค่าที่อยู่ใน options คงไว้', async () => {

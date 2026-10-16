@@ -7,20 +7,46 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { initDb, pool, query, nextCaseNo } from './db.js';
 import { validateSchema } from './formSchema.js';
-import { signToken, requireAuth, requireAdmin } from './auth.js';
-import { calcProgress, sanitizeData, missingRequired } from './progress.js';
+import { signToken, requireAuth, requireAdmin, loginBlocked, loginFailed, loginSucceeded } from './auth.js';
+import { calcProgress, sanitizeData, missingRequired, validDate } from './progress.js';
 
 const app = express();
-app.use(cors());
+app.disable('x-powered-by');
+// อยู่หลัง nginx: TRUST_PROXY=1 เพื่อให้ req.ip เป็น IP ผู้ใช้จริง (ใช้จำกัดการล็อกอินผิด)
+if (process.env.TRUST_PROXY) app.set('trust proxy', Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY);
+// หน้าเว็บกับ API อยู่ origin เดียวกัน (dev ใช้ proxy ของ Vite) เปิด CORS เฉพาะ origin ที่ระบุใน CORS_ORIGIN
+if (process.env.CORS_ORIGIN) app.use(cors({ origin: process.env.CORS_ORIGIN.split(',').map((s) => s.trim()) }));
+
+// security headers ทุก response (CSP อนุญาตเฉพาะไฟล์ของระบบเอง + Google Fonts)
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com",
+  "img-src 'self' data:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'self'",
+].join('; ');
+app.use((req, res, next) => {
+  res.set({
+    'Content-Security-Policy': CSP,
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'SAMEORIGIN',
+    'Referrer-Policy': 'same-origin',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+    'Cross-Origin-Opener-Policy': 'same-origin',
+  });
+  // ข้อมูลจาก API มีข้อมูลส่วนบุคคล ห้ามเบราว์เซอร์/proxy เก็บแคช
+  if (req.path.startsWith('/api/')) res.set('Cache-Control', 'no-store');
+  next();
+});
 app.use(express.json({ limit: '1mb' }));
 
 const wrap = (fn) => (req, res, next) => fn(req, res, next).catch(next);
-// 'YYYY-MM-DD' ที่เป็นวันที่มีอยู่จริงเท่านั้น (2026-02-30 → null)
-const dateOrNull = (v) => {
-  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
-  const d = new Date(`${v}T00:00:00Z`);
-  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v ? v : null;
-};
+const dateOrNull = (v) => (validDate(v) ? v : null);
 const badReceiveDate = (h) => h.receiveDate && !dateOrNull(h.receiveDate);
 
 // :id ต้องเป็นจำนวนเต็มบวกในช่วง integer ของ Postgres ไม่งั้นถือว่าไม่พบ (กัน error 500 จากฐานข้อมูล)
@@ -34,13 +60,21 @@ app.post('/api/auth/login', wrap(async (req, res) => {
   const { username, password } = req.body || {};
   const fail = () => res.status(401).json({ error: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' });
   if (typeof username !== 'string' || typeof password !== 'string') return fail();
+  const wait = loginBlocked(req, username);
+  if (wait) return res.status(429).json({ error: `ล็อกอินผิดหลายครั้งเกินไป กรุณาลองใหม่ในอีก ${wait} นาที` });
   const { rows } = await query('SELECT * FROM users WHERE username=$1 AND active', [username]);
   const u = rows[0];
-  if (!u || !(await bcrypt.compare(password, u.password_hash))) {
-    return res.status(401).json({ error: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' });
+  // ไม่มีผู้ใช้ก็ยังเทียบ hash เพื่อให้เวลาตอบกลับใกล้เคียงกัน (กันการเดาว่ามี username นี้หรือไม่)
+  const ok = await bcrypt.compare(password, u?.password_hash || DUMMY_HASH);
+  if (!u || !ok) {
+    loginFailed(req, username);
+    return fail();
   }
+  loginSucceeded(req, username);
   res.json({ token: signToken(u), user: publicUser(u) });
 }));
+
+const DUMMY_HASH = bcrypt.hashSync('dummy-password-for-timing', 10);
 
 const publicUser = (u) => ({ id: u.id, username: u.username, displayName: u.display_name, role: u.role, orgId: u.org_id });
 
@@ -57,11 +91,19 @@ app.post('/api/auth/password', requireAuth, wrap(async (req, res) => {
   if (typeof current !== 'string' || !(await bcrypt.compare(current, rows[0].password_hash))) {
     return res.status(400).json({ error: 'รหัสผ่านปัจจุบันไม่ถูกต้อง' });
   }
-  await query('UPDATE users SET password_hash=$1 WHERE id=$2', [await bcrypt.hash(next, 10), req.user.id]);
-  res.json({ ok: true });
+  const u = (await query(
+    'UPDATE users SET password_hash=$1, pwd_changed_at=$3 WHERE id=$2 RETURNING *', [await bcrypt.hash(next, 10), req.user.id, new Date()]
+  )).rows[0];
+  // token เดิมทุกเครื่องใช้ไม่ได้แล้ว ส่ง token ใหม่ให้เครื่องที่เปลี่ยนรหัสผ่าน
+  res.json({ ok: true, token: signToken(u) });
 }));
 
 // ---------- Users (admin) ----------
+// orgId ว่าง (null) หรือเป็นรหัสหน่วยงานที่มีอยู่จริง
+const orgOk = async (orgId) =>
+  orgId == null || (Number.isInteger(Number(orgId)) && Number(orgId) > 0 && Number(orgId) <= 2147483647 &&
+    (await query('SELECT 1 FROM orgs WHERE id=$1', [Number(orgId)])).rowCount > 0);
+
 app.get('/api/users', requireAuth, requireAdmin, wrap(async (_req, res) => {
   const { rows } = await query(
     `SELECT u.id, u.username, u.display_name, u.role, u.org_id, u.active, o.short_name AS org_name
@@ -71,12 +113,15 @@ app.get('/api/users', requireAuth, requireAdmin, wrap(async (_req, res) => {
 }));
 
 app.post('/api/users', requireAuth, requireAdmin, wrap(async (req, res) => {
-  const { username, password, displayName, role = 'staff', orgId = null } = req.body || {};
+  const { username, password, displayName, role = 'staff' } = req.body || {};
+  const orgId = req.body?.orgId || null;
   if (typeof username !== 'string' || !username || typeof password !== 'string' || password.length < 8 || typeof displayName !== 'string' || !displayName) {
     return res.status(400).json({ error: 'กรอก username, ชื่อ และรหัสผ่านอย่างน้อย 8 ตัวอักษร' });
   }
   if (!['admin', 'staff'].includes(role)) return res.status(400).json({ error: 'role ไม่ถูกต้อง' });
   if (role === 'staff' && !orgId) return res.status(400).json({ error: 'เจ้าหน้าที่ต้องระบุหน่วยงาน' });
+  if (!(await orgOk(orgId))) return res.status(400).json({ error: 'ไม่พบหน่วยงาน' });
+  if (username.length > 100 || displayName.length > 200) return res.status(400).json({ error: 'username หรือชื่อยาวเกินไป' });
   try {
     const { rows } = await query(
       `INSERT INTO users (username, password_hash, display_name, role, org_id)
@@ -95,7 +140,7 @@ app.put('/api/users/:id', requireAuth, requireAdmin, wrap(async (req, res) => {
   const cur = (await query('SELECT * FROM users WHERE id=$1', [id])).rows[0];
   if (!cur) return res.status(404).json({ error: 'ไม่พบผู้ใช้' });
   const b = req.body || {};
-  const displayName = b.displayName?.trim() || cur.display_name;
+  const displayName = (typeof b.displayName === 'string' && b.displayName.trim().slice(0, 200)) || cur.display_name;
   const role = b.role ?? cur.role;
   const orgId = 'orgId' in b ? b.orgId || null : cur.org_id;
   const active = 'active' in b ? !!b.active : cur.active;
@@ -104,12 +149,15 @@ app.put('/api/users/:id', requireAuth, requireAdmin, wrap(async (req, res) => {
     return res.status(400).json({ error: 'ไม่สามารถปิดการใช้งานหรือลดสิทธิ์บัญชีของตนเองได้' });
   }
   if (role === 'staff' && !orgId) return res.status(400).json({ error: 'เจ้าหน้าที่ต้องระบุหน่วยงาน' });
+  if (!(await orgOk(orgId))) return res.status(400).json({ error: 'ไม่พบหน่วยงาน' });
   if (b.password && (typeof b.password !== 'string' || b.password.length < 8)) return res.status(400).json({ error: 'รหัสผ่านต้องยาวอย่างน้อย 8 ตัวอักษร' });
   const hash = b.password ? await bcrypt.hash(b.password, 10) : cur.password_hash;
+  // ผู้ดูแลตั้งรหัสผ่านใหม่ให้ → token เดิมของผู้ใช้นั้นใช้ไม่ได้
   const { rows } = await query(
-    `UPDATE users SET display_name=$1, role=$2, org_id=$3, active=$4, password_hash=$5 WHERE id=$6
-     RETURNING id, username, display_name, role, org_id, active`,
-    [displayName, role, orgId, active, hash, id]
+    `UPDATE users SET display_name=$1, role=$2, org_id=$3, active=$4, password_hash=$5,
+       pwd_changed_at = COALESCE($7, pwd_changed_at)
+     WHERE id=$6 RETURNING id, username, display_name, role, org_id, active`,
+    [displayName, role, orgId, active, hash, id, b.password ? new Date() : null]
   );
   res.json(rows[0]);
 }));
@@ -170,8 +218,9 @@ app.get('/api/cases', requireAuth, wrap(async (req, res) => {
   if (status) add('c.status = ?', status);
   if (dateOrNull(from)) add('c.receive_date >= ?', from);
   if (dateOrNull(to)) add('c.receive_date <= ?', to);
-  if (q) {
-    p.push(`%${q}%`);
+  if (typeof q === 'string' && q) {
+    // ค้นหาตามตัวอักษรจริง: % และ _ ที่ผู้ใช้พิมพ์ไม่ถือเป็น wildcard
+    p.push(`%${q.slice(0, 200).replace(/[\\%_]/g, '\\$&')}%`);
     const n = `$${p.length}`;
     where.push(`(c.case_no ILIKE ${n} OR c.doc_no ILIKE ${n} OR c.requester ILIKE ${n})`);
   }

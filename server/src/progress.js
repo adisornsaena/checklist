@@ -19,8 +19,17 @@ export function calcProgress(schema, data = {}) {
   return total ? Math.round((done / total) * 100) : 0;
 }
 
+// 'YYYY-MM-DD' ที่เป็นวันที่มีอยู่จริงเท่านั้น (2026-02-30 → false)
+export function validDate(v) {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const d = new Date(`${v}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
+}
+
 // ตัดข้อมูลให้เหลือเฉพาะ key ที่มีใน schema (กันข้อมูลแปลกปลอม) และจำกัดความยาวข้อความ
 const str = (v, max = 2000) => (typeof v === 'string' ? v.slice(0, max) : v == null ? '' : String(v).slice(0, max));
+const date = (v) => (validDate(v) ? v : '');
+const fieldVal = (f, v) => (f.type === 'date' ? date(v) : str(v, 500));
 
 export function sanitizeData(schema, input) {
   if (!input || typeof input !== 'object') input = {};
@@ -31,27 +40,27 @@ export function sanitizeData(schema, input) {
     if (s.type === 'checks') {
       for (const it of s.items) {
         const c = input.checks?.[it.id] || {};
-        out.checks[it.id] = { checked: !!c.checked, remark: str(c.remark, 500) };
+        out.checks[it.id] = { checked: c.checked === true, remark: str(c.remark, 500) };
       }
-      if (s.dateField) out.fields[s.dateField.key] = str(input.fields?.[s.dateField.key], 20);
+      if (s.dateField) out.fields[s.dateField.key] = date(input.fields?.[s.dateField.key]);
     } else if (s.type === 'steps') {
       for (const it of s.items) {
         const c = input.steps?.[it.id] || {};
         const allowed = it.options.map((o) => o.value);
         out.steps[it.id] = {
           value: allowed.includes(c.value) ? c.value : '',
-          date: str(c.date, 20),
+          date: date(c.date),
           operator: str(c.operator, 200),
           remark: str(c.remark, 500),
           ...(it.amount ? { amount: str(c.amount, 30) } : {}),
         };
       }
     } else if (s.type === 'fields') {
-      for (const f of s.fields) out.fields[f.key] = str(input.fields?.[f.key], 500);
+      for (const f of s.fields) out.fields[f.key] = fieldVal(f, input.fields?.[f.key]);
     }
   }
   if (schema.footer?.note) out.note = str(input.note, 5000);
-  if (schema.footer?.completedDate) out.completedDate = str(input.completedDate, 20);
+  if (schema.footer?.completedDate) out.completedDate = date(input.completedDate);
   if (schema.footer?.closedBy) out.closedBy = str(input.closedBy, 200);
   return out;
 }

@@ -90,5 +90,8 @@ CREATE TABLE IF NOT EXISTS form_template_versions (
 );
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS template_version INT NOT NULL DEFAULT 1;
 
+-- เวลาเปลี่ยนรหัสผ่านล่าสุด: token ที่ออกก่อนหน้านี้ใช้ไม่ได้อีก
+ALTER TABLE users ADD COLUMN IF NOT EXISTS pwd_changed_at TIMESTAMPTZ;
+
 -- ค่าสถานะการ migrate ครั้งเดียว (กันการเขียนทับสิ่งที่ผู้ดูแลปรับในภายหลัง)
 CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT);

@@ -51,15 +51,28 @@ export async function initDb() {
   await renumberLegacyCases();
   await markDefaultRequiredFields();
 
+  const prod = process.env.NODE_ENV === 'production';
   const { rows } = await query('SELECT count(*)::int AS n FROM users');
   if (rows[0].n === 0) {
     const username = process.env.ADMIN_USERNAME || 'admin';
     const password = process.env.ADMIN_PASSWORD || 'admin1234';
+    // production ห้ามสร้างผู้ดูแลด้วยรหัสผ่านตั้งต้นที่ใครก็รู้
+    if (prod && (password === 'admin1234' || password.length < 12)) {
+      throw new Error('production ต้องตั้ง ADMIN_PASSWORD (อย่างน้อย 12 ตัวอักษร และไม่ใช่ admin1234) ก่อนสร้างผู้ดูแลคนแรก');
+    }
     await query(
       `INSERT INTO users (username, password_hash, display_name, role) VALUES ($1,$2,'ผู้ดูแลระบบ','admin')`,
       [username, await bcrypt.hash(password, 10)]
     );
     console.log(`สร้างผู้ใช้เริ่มต้น: ${username} (โปรดเปลี่ยนรหัสผ่าน)`);
+  }
+
+  // เตือนถ้ายังมีผู้ดูแลที่ใช้รหัสผ่านตั้งต้น admin1234
+  const admins = (await query(`SELECT username, password_hash FROM users WHERE role='admin' AND active`)).rows;
+  for (const a of admins) {
+    if (await bcrypt.compare('admin1234', a.password_hash)) {
+      console.warn(`คำเตือนความปลอดภัย: ผู้ดูแล "${a.username}" ยังใช้รหัสผ่านตั้งต้น admin1234 — เปลี่ยนทันทีที่เมนูเปลี่ยนรหัสผ่าน`);
+    }
   }
 }
 

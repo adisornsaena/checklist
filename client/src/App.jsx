@@ -8,6 +8,7 @@ import CaseForm from './pages/CaseForm.jsx';
 import Users from './pages/Users.jsx';
 import FormAdmin from './pages/FormAdmin.jsx';
 import FormEditor from './pages/FormEditor.jsx';
+import ChangePassword from './pages/ChangePassword.jsx';
 import ChecklistIcon from './components/ChecklistIcon.jsx';
 
 const AuthCtx = createContext(null);
@@ -52,7 +53,7 @@ function Shell() {
           {user.role === 'admin' && <Link to="/users">ผู้ใช้งาน</Link>}
         </nav>
         <div className="grow" />
-        <span className="muted small">{user.displayName}{user.role === 'admin' ? ' (ผู้ดูแล)' : ''}</span>
+        <Link to="/password" className="muted small" title="เปลี่ยนรหัสผ่าน">{user.displayName}{user.role === 'admin' ? ' (ผู้ดูแล)' : ''}</Link>
         <button className="btn ghost" onClick={logout}>ออกจากระบบ</button>
       </header>
       <main className="container">
@@ -63,6 +64,7 @@ function Shell() {
           <Route path="admin/forms/new" element={user.role === 'admin' ? <FormEditor /> : <Navigate to="/" />} />
           <Route path="admin/forms/:code" element={user.role === 'admin' ? <FormEditor /> : <Navigate to="/" />} />
           <Route path="users" element={user.role === 'admin' ? <Users /> : <Navigate to="/" />} />
+          <Route path="password" element={<ChangePassword />} />
           <Route path="cases/new/:code" element={<CaseForm />} />
           <Route path="cases/:id" element={<CaseForm />} />
           <Route path="*" element={<Navigate to="/" />} />

@@ -43,6 +43,8 @@ services:
       PORT: 4000
       DATABASE_URL: postgres://checklist:checklist@db:5432/checklist
       JWT_SECRET: ${JWT_SECRET:-}                    # ตั้งในไฟล์ .env ข้าง docker-compose.yml
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}            # ใช้เฉพาะตอนสร้างผู้ดูแลคนแรก (ฐานข้อมูลว่าง) ต้อง ≥ 12 ตัวอักษร
+      TRUST_PROXY: "1"                               # อยู่หลัง nginx 1 ชั้น: ให้แอปเห็น IP ผู้ใช้จริง
     depends_on:
       db:
         condition: service_healthy
