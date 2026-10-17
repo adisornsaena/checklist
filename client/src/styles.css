@@ -188,6 +188,7 @@ textarea { width: 100%; resize: vertical; }
 }
 
 .req { color: var(--bad); font-style: normal; font-weight: 700; }
+.req.req-close { color: var(--ok); }  /* * เขียว = ต้องกรอกก่อนปิดงาน (แดง = ช่องบังคับกรอกทั่วไป) */
 input.invalid { border-color: var(--bad) !important; box-shadow: 0 0 0 2px #f5c2be; }
 
 /* หน้าผู้ใช้งาน */
@@ -342,3 +343,16 @@ code { background: #eef2f5; padding: 1px 6px; border-radius: 4px; font-size: 12p
   td.row-actions { display: table-cell; white-space: normal; }
   td.row-actions > .btn, td.row-actions > a.btn { margin: 2px 6px 2px 0; display: inline-block; }
 }
+
+/* ===== คู่มือ ===== */
+.manual-anim { padding: 0; overflow: hidden; margin: 12px 0 18px; }
+.manual-anim iframe { display: block; width: 100%; border: 0; background: #eef1f4; }
+.manual-h2 { font-size: 18px; margin: 20px 0 10px; }
+.manual-steps { list-style: none; margin: 0 0 18px; padding: 0; display: grid; gap: 10px; }
+.manual-steps li { display: flex; gap: 14px; align-items: flex-start; }
+.manual-steps p { margin: 4px 0 0; color: var(--muted); }
+.manual-no { flex: none; width: 32px; height: 32px; border-radius: 50%; background: var(--primary); color: #fff; display: grid; place-items: center; font-weight: 700; }
+.manual-legend, .manual-tips { margin-bottom: 14px; }
+.manual-legend p { margin: 6px 0 0; }
+.manual-tips ul { margin: 6px 0 0; padding-left: 20px; } .manual-tips li { margin: 4px 0; }
+@media print { .manual-anim { display: none; } }

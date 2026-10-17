@@ -31,6 +31,7 @@ Production: `npm run build && npm start` (server เสิร์ฟ client/dist 
   (อักษรนำหน้าตั้งที่ `doc_prefix` ใน `templates.js`/ตาราง `orgs`; ตัวนับอยู่ใน `case_counters`)
 - สถานะ open → closed / cancelled; ปิดงานต้องกรอก "ผู้ปิดงาน" และ "วันที่ดำเนินการแล้วเสร็จ" (ถ้าฟอร์มมีช่องนั้น); ปิดแล้วล็อกฟอร์ม (เฉพาะ admin เปิดใหม่ได้)
 - สิทธิ์: `admin` ทุกหน่วยงาน · `staff` ผูก `org_id` เห็นเฉพาะหน่วยงานตน (จัดการที่เมนู "ผู้ใช้งาน")
+- **เมนู "คู่มือ"** (ทุกบัญชีเห็น): แอนิเมชันสาธิตขั้นตอนการใช้งาน + สรุปแต่ละขั้นตอน — ไฟล์อยู่ที่ `client/public/manual/` (`animation.html`/`animation.js`); ไฟล์เดี่ยวสำหรับแชร์อยู่ที่ `docs/usage-animation.html`
 - พิมพ์/บันทึก PDF จากปุ่ม "พิมพ์" (A4 หน้าเดียว) · รองรับมือถือ/แท็บเล็ต · ประวัติการแก้ไขใน `case_logs`
 
 ## เปิดให้ผู้ใช้ภายนอกเข้าทดสอบ (nginx)
@@ -68,5 +69,6 @@ Sub agents สำหรับ Claude Code อยู่ใน `.claude/agents/`: 
 `GET|PUT|DELETE /api/cases/:id` · `POST /api/cases/:id/(close|reopen|cancel)` · `GET /api/stats`
 
 admin: `GET|POST /api/admin/forms` · `GET|PUT /api/admin/forms/:code` · `GET|POST|PUT /api/users`
-#   c h e c k l i s t  
+#   c h e c k l i s t 
+ 
  

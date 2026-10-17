@@ -164,13 +164,13 @@ export default function FormRenderer({ template, data, onChange, readOnly, inval
 
       <div className="sign">
         {schema.footer?.completedDate && (
-          <label>วันที่ดำเนินการแล้วเสร็จ <em className="req" title="ต้องกรอกก่อนปิดงาน">*</em>
+          <label>วันที่ดำเนินการแล้วเสร็จ <em className="req req-close" title="ต้องกรอกก่อนปิดงาน">*</em>
             <input type="date" className={invalid.includes('completedDate') ? 'invalid' : ''} value={data.completedDate || ''} disabled={readOnly}
               onChange={(e) => set({ completedDate: e.target.value })} />
           </label>
         )}
         {schema.footer?.closedBy && (
-          <label>ผู้ปิดงาน <em className="req" title="ต้องกรอกก่อนปิดงาน">*</em>
+          <label>ผู้ปิดงาน <em className="req req-close" title="ต้องกรอกก่อนปิดงาน">*</em>
             <input className={invalid.includes('closedBy') ? 'invalid' : ''} value={data.closedBy || ''} disabled={readOnly} onChange={(e) => set({ closedBy: e.target.value })} />
           </label>
         )}

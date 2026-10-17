@@ -10,6 +10,7 @@ import FormAdmin from './pages/FormAdmin.jsx';
 import FormEditor from './pages/FormEditor.jsx';
 import ChangePassword from './pages/ChangePassword.jsx';
 import ChecklistIcon from './components/ChecklistIcon.jsx';
+import Manual from './pages/Manual.jsx';
 
 const AuthCtx = createContext(null);
 export const useAuth = () => useContext(AuthCtx);
@@ -49,6 +50,7 @@ function Shell() {
           <ChecklistIcon className="brand-icon" size={24} />
           <Link to="/">แบบฟอร์ม</Link>
           <Link to="/cases">รายการเอกสาร</Link>
+          <Link to="/manual">คู่มือ</Link>
           {user.role === 'admin' && <Link to="/admin/forms">จัดการแบบฟอร์ม</Link>}
           {user.role === 'admin' && <Link to="/users">ผู้ใช้งาน</Link>}
         </nav>
@@ -60,6 +62,7 @@ function Shell() {
         <Routes>
           <Route index element={<Home />} />
           <Route path="cases" element={<CaseList />} />
+          <Route path="manual" element={<Manual />} />
           <Route path="admin/forms" element={user.role === 'admin' ? <FormAdmin /> : <Navigate to="/" />} />
           <Route path="admin/forms/new" element={user.role === 'admin' ? <FormEditor /> : <Navigate to="/" />} />
           <Route path="admin/forms/:code" element={user.role === 'admin' ? <FormEditor /> : <Navigate to="/" />} />

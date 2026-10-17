@@ -291,8 +291,8 @@ export default function FormEditor() {
           <section className="card ed-sec">
             <h3>ท้ายฟอร์ม</h3>
             <label className="ed-check"><input type="checkbox" checked={schema.footer.note} onChange={(e) => edit((n) => { n.footer.note = e.target.checked; })} /> ช่อง "รายละเอียดเพิ่มเติม (ถ้ามี)"</label>
-            <label className="ed-check"><input type="checkbox" checked={schema.footer.completedDate} onChange={(e) => edit((n) => { n.footer.completedDate = e.target.checked; })} /> ช่อง "วันที่ดำเนินการแล้วเสร็จ" <span className="muted small">(ถ้าเปิด ต้องกรอกก่อนปิดงาน)</span></label>
-            <label className="ed-check"><input type="checkbox" checked={schema.footer.closedBy} onChange={(e) => edit((n) => { n.footer.closedBy = e.target.checked; })} /> ช่อง "ผู้ปิดงาน" <span className="muted small">(ถ้าเปิด ต้องกรอกก่อนปิดงาน)</span></label>
+            <label className="ed-check"><input type="checkbox" checked={schema.footer.completedDate} onChange={(e) => edit((n) => { n.footer.completedDate = e.target.checked; })} /> ช่อง "วันที่ดำเนินการแล้วเสร็จ" <span className="req req-close">*</span> <span className="muted small">(ถ้าเปิด ต้องกรอกก่อนปิดงาน)</span></label>
+            <label className="ed-check"><input type="checkbox" checked={schema.footer.closedBy} onChange={(e) => edit((n) => { n.footer.closedBy = e.target.checked; })} /> ช่อง "ผู้ปิดงาน" <span className="req req-close">*</span> <span className="muted small">(ถ้าเปิด ต้องกรอกก่อนปิดงาน)</span></label>
           </section>
         </div>
       )}
